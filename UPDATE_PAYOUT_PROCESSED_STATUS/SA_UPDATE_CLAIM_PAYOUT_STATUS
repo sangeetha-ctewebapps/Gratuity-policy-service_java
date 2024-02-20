@@ -1,0 +1,98 @@
+create or replace PROCEDURE SA_UPDATE_CLAIM_PAYOUT_STATUS (
+REFNUMBER IN VARCHAR2, --1. change in/out params
+JOURNAL_NO IN VARCHAR2,
+PAYMENTDATE IN date,
+PSTATUS IN VARCHAR2, 
+PMESSAGE IN VARCHAR2, 
+MODIFIEDBY IN VARCHAR2,
+UTRNO IN VARCHAR2,
+p_message out VARCHAR2,
+p_resultcode out NUMBER) 
+AS
+
+
+        PAYOUTSP_ID 		NUMBER(30,0)   :=	0;
+        MST_POLICY_ID        NUMBER(30,0)   :=	0;
+		 e_message 		varchar2(40)	:=	Null;
+		 e_result 		NUMBER(10)	:=	0;
+		 Raise_Exp 		exception;
+         
+--         CURRENT_DATE varchar2(40)	:=	Null;
+--         POL_FINANIAL_YEAR varchar2(40)	:=	Null;
+--         POL_QUARTER   varchar2(40)	:=	Null;
+--         POL_FREQUENCY   NUMBER(10,0)   :=	0;
+         CLAIM_NUMBER varchar2(40)	:=	Null;
+         
+         
+BEGIN
+--BEGIN
+--SELECT  IN_DATE,
+--CASE WHEN TO_CHAR(IN_DATE,'MM') IN ('01','02','03') 
+--THEN TO_CHAR(TO_NUMBER(TO_CHAR(IN_DATE,'YYYY')))-1||'-'||TO_CHAR(TO_NUMBER(TO_CHAR(IN_DATE,'YYYY')))
+--ELSE TO_CHAR(TO_NUMBER(TO_CHAR(IN_DATE,'YYYY')))||'-'||TO_CHAR(TO_NUMBER(TO_CHAR(IN_DATE,'YYYY'))+1)
+--END FINANCIAL_YEAR,
+--CASE WHEN TO_CHAR(IN_DATE,'MM') IN ('04','05','06') THEN 'Q1'
+--ELSE CASE WHEN TO_CHAR(IN_DATE,'MM') IN ('07','08','09') THEN 'Q2'
+--ELSE CASE WHEN TO_CHAR(IN_DATE,'MM') IN ('10','11','12') THEN 'Q3'
+--ELSE 'Q4' END END END QUARTER,
+--CASE WHEN TO_CHAR(IN_DATE,'MM') IN ('04','05','06') THEN '1'
+--ELSE CASE WHEN TO_CHAR(IN_DATE,'MM') IN ('07','08','09') THEN '2'
+--ELSE CASE WHEN TO_CHAR(IN_DATE,'MM') IN ('10','11','12') THEN '3'
+--ELSE '4' END END END FREQUENCY INTO CURRENT_DATE,POL_FINANIAL_YEAR,POL_QUARTER,POL_FREQUENCY
+--FROM (SELECT TO_DATE(trunc(sysdate),'DD-MM-YYYY') IN_DATE FROM DUAL);
+--
+-- EXCEPTION
+--         when no_data_found then
+--         POL_FINANIAL_YEAR := null;
+--         POL_FREQUENCY :=0;
+--END;
+
+--1. ref number logic select SUBSTR('CLAIM_OB00000641', INSTR('CLAIM_OB00000641', ' ') + 7) AS last_part FROM dual; --OB00000641
+--2. append claim_ to refNumber to get claimOnboarding
+--3. onboard 5041 number exists in payout_response table
+--4. if present  update status and utr number
+    BEGIN
+     Select PSPR.PAYOUT_SP_ID,py.POLICY_ID,py.CLAIM_NO INTO PAYOUTSP_ID,MST_POLICY_ID,CLAIM_NUMBER  from TEMP_PAYOUT py
+        JOIN CLAIM_ONBORADING onb ON onb.INTIMATION_NO = py.INTIMATION_NO
+        JOIN PAYOUT_STORED_PROCEDURE_RESPONSE PSPR ON PSPR.PAYOUT_ID=py.PAYOUT_ID
+        where onb.CLAIM_ONBOARD_NO='CLAIM_'||REFNUMBER  AND py.IS_ACTIVE=1 AND  PSPR.JOURNAL_NO=JOURNAL_NO;
+     EXCEPTION
+         when no_data_found then
+         PAYOUTSP_ID :=0;
+         MST_POLICY_ID :=0;
+     END;
+    IF (PAYOUTSP_ID is null OR PAYOUTSP_ID = 0 AND MST_POLICY_ID is null OR MST_POLICY_ID = 0 ) then
+		e_message := 'Data Not Found';
+		e_result := 0; 
+        Raise Raise_Exp;
+	End If;
+
+    UPDATE PAYOUT_STORED_PROCEDURE_RESPONSE SET PROCESSED_STATUS = PSTATUS, PROCESSED_MESSAGE = PMESSAGE,
+            MODIFIED_BY = MODIFIEDBY,UTR_NO=UTRNO,PAYOUT_DATE=PAYMENTDATE, MODIFIED_ON = CURRENT_TIMESTAMP WHERE PAYOUT_SP_ID = PAYOUTSP_ID;
+
+    UPDATE POLICY_TRANSACTION_ENTRIES upte 
+    SET upte.TRANSACTION_DATE=to_date('11-02-2023','dd-MM-yyyy') 
+    where
+    exists (select 1 from TEMP_PAYOUT utp where upte.POLICY_ID= utp.POLICY_ID 
+    and utp.POLICY_TYPE='DB')
+    AND upte.POLICY_ID = MST_POLICY_ID
+    AND upte.ENTRY_TYPE='CLAIM-COM'
+    AND upte.txn_ref_no=CLAIM_NUMBER;
+
+
+        p_resultcode := 1;
+        p_message := 'Success';
+		commit;
+
+EXCEPTION 
+    WHEN Raise_Exp then
+		p_resultcode :=  e_result;
+        p_message := e_message;
+        ROLLBACK;
+    WHEN OTHERS THEN
+        p_resultcode :=  0;
+        p_message := DBMS_UTILITY.format_error_stack||' '||DBMS_UTILITY.format_error_backtrace;
+        ROLLBACK;
+
+
+END SA_UPDATE_CLAIM_PAYOUT_STATUS;
